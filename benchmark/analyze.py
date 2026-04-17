@@ -56,6 +56,36 @@ def print_summary(rows: list[dict]):
     hdr = f"{'Kernel':<35} {'Stores':>7} {'Delta (B)':>10} {'Delta %':>8} {'Time':>6}"
     print(hdr)
     print("-" * len(hdr))
+    for r in sorted(rows, key=lambda x: x["stores_eliminated"], reverse=True):
+        print(f"{r['kernel']:<35} {r['stores_eliminated']:>7} "
+              f"{r['size_delta']:>10} {r['size_pct']:>7.2f}% "
+              f"{r['pass_time_ms']:>5}ms")
+
+    print()
+    print("-" * 72)
+    print(f"  Kernels benchmarked:         {len(rows)}")
+    print(f"  Kernels with eliminations:   {len(affected)}")
+    print(f"  Total dead stores removed:   {total_stores}")
+    print(f"  Total binary size reduction: {total_baseline - total_custom:,} bytes ({total_pct:.2f}%)")
+    print(f"  Avg size reduction (where >0): {avg_size_pct:.2f}%")
+    print(f"  Avg pass execution time:     {avg_time:.1f}ms")
+    print("-" * 72)
+    print()
+
+    # Resume-ready line
+    print("RESUME-READY METRICS:")
+    print(f"  Kernels:   {len(rows)}")
+    print(f"  DSE delta: {total_pct:.1f}% additional dead stores")
+    print(f"  Size:      {total_pct:.1f}% binary size reduction")
+    print(f"  Tests:     update with actual lit test count")
+    print()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python3 analyze.py <results_dir>")
+        sys.exit(1)
+    rows = load_results(sys.argv[1])
 
 # ...existing code...
 #!/usr/bin/env python3
