@@ -86,6 +86,7 @@ if __name__ == "__main__":
         print("Usage: python3 analyze.py <results_dir>")
         sys.exit(1)
     rows = load_results(sys.argv[1])
+    print_summary(rows)
 
 # ...existing code...
 #!/usr/bin/env python3
