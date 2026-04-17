@@ -155,6 +155,64 @@ bool CustomDSEPass::eliminateWriteOnlyAllocas(Function &F) {
 }
 
 //===----------------------------------------------------------------------===//
+// Pass Entry Point
+//===----------------------------------------------------------------------===//
+
+PreservedAnalyses CustomDSEPass::run(Function &F,
+                                      FunctionAnalysisManager &AM) {
+    if (F.isDeclaration())
+        return PreservedAnalyses::all();
+
+    bool Changed = false;
+
+    // Strategy 1: no dependencies needed.
+    Changed |= eliminateWriteOnlyAllocas(F);
+
+    // Strategies 2 & 3 need MemorySSA + DominatorTree + AliasAnalysis.
+    auto &DT   = AM.getResult<DominatorTreeAnalysis>(F);
+    auto &MSSA = AM.getResult<MemorySSAAnalysis>(F).getMSSA();
+    auto &AA   = AM.getResult<AAManager>(F);
+
+    Changed |= eliminateDominatedStores(F, DT, MSSA, AA);
+    Changed |= eliminatePreLifetimeEndStores(F, MSSA);
+
+    if (!Changed)
+        return PreservedAnalyses::all();
+
+    PreservedAnalyses PA;
+    PA.preserve<DominatorTreeAnalysis>();
+    return PA;
+}
+
+} // namespace custom_dse
+
+//===----------------------------------------------------------------------===//
+// Pass Plugin Registration (New Pass Manager)
+//===----------------------------------------------------------------------===//
+
+extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
+llvmGetPassPluginInfo() {
+    return {
+        LLVM_PLUGIN_API_VERSION,
+        "CustomDSEPass",
+        LLVM_VERSION_STRING,
+        [](PassBuilder &PB) {
+            // Register the pass so that it can be used with:
+            //   opt -load-pass-plugin=./libCustomDSEPass.so \
+            //       -passes="custom-dse" input.ll -o output.ll
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, FunctionPassManager &FPM,
+                   ArrayRef<PassBuilder::PipelineElement>) {
+                    if (Name == "custom-dse") {
+                        FPM.addPass(custom_dse::CustomDSEPass());
+                        return true;
+                    }
+                    return false;
+                });
+        }};
+}
+
+//===----------------------------------------------------------------------===//
 // Strategy 3: Pre-Lifetime.End Store Elimination
 //===----------------------------------------------------------------------===//
 
