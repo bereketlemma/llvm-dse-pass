@@ -153,3 +153,48 @@ bool CustomDSEPass::eliminateWriteOnlyAllocas(Function &F) {
 
     return Changed;
 }
+
+//===----------------------------------------------------------------------===//
+// Strategy 2: Dominated Redundant Store Elimination (MemorySSA)
+//===----------------------------------------------------------------------===//
+
+/// Walk from a MemoryDef (store) to its defining access. If the defining
+/// access is another MemoryDef that stores to the same location, and the
+/// earlier store is dominated by the later one's block (meaning the later
+/// store post-dominates all paths from the earlier one), the earlier store
+/// is dead.
+///
+/// This catches patterns like:
+///     store i32 1, ptr %p      ; dead — overwritten below
+///     store i32 2, ptr %p
+///
+/// within a basic block or across blocks when dominance allows.
+
+bool CustomDSEPass::eliminateDominatedStores(Function &F,
+                                              DominatorTree &DT,
+                                              MemorySSA &MSSA,
+                                              AliasAnalysis &AA) {
+    bool Changed = false;
+    MemorySSAUpdater Updater(&MSSA);
+    SmallVector<Instruction *, 8> ToDelete;
+
+    for (BasicBlock &BB : F) {
+        // Collect stores in this block.
+        SmallVector<StoreInst *, 8> Stores;
+        for (Instruction &I : BB)
+            if (auto *SI = dyn_cast<StoreInst>(&I))
+                Stores.push_back(SI);
+
+        for (StoreInst *LaterStore : Stores) {
+            // Never eliminate volatile stores.
+            if (LaterStore->isVolatile())
+                continue;
+
+            MemoryAccess *MA = MSSA.getMemoryAccess(LaterStore);
+            if (!MA)
+                continue;
+
+            auto *LaterDef = dyn_cast<MemoryDef>(MA);
+            if (!LaterDef)
+                continue;
+
