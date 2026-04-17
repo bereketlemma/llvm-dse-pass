@@ -103,3 +103,53 @@ static bool isWriteOnlyUser(const Value *V, SmallPtrSetImpl<const Value *> &Visi
 
     return true;
 }
+
+bool CustomDSEPass::eliminateWriteOnlyAllocas(Function &F) {
+    SmallVector<AllocaInst *, 16> Allocas;
+    for (auto &I : F.getEntryBlock())
+        if (auto *AI = dyn_cast<AllocaInst>(&I))
+            Allocas.push_back(AI);
+
+    bool Changed = false;
+
+    for (AllocaInst *AI : Allocas) {
+        SmallPtrSet<const Value *, 16> Visited;
+        if (!isWriteOnlyUser(AI, Visited))
+            continue;
+
+        // Collect all stores and lifetime intrinsics to delete.
+        SmallVector<Instruction *, 8> ToDelete;
+        SmallVector<Value *, 4> Worklist;
+        Worklist.push_back(AI);
+
+        SmallPtrSet<Value *, 16> Seen;
+        while (!Worklist.empty()) {
+            Value *V = Worklist.pop_back_val();
+            if (!Seen.insert(V).second)
+                continue;
+            for (User *U : V->users()) {
+                if (auto *SI = dyn_cast<StoreInst>(U)) {
+                    ToDelete.push_back(SI);
+                } else if (auto *II = dyn_cast<IntrinsicInst>(U)) {
+                    ToDelete.push_back(II);
+                } else if (isa<BitCastInst>(U) || isa<GetElementPtrInst>(U) ||
+                           isa<AddrSpaceCastInst>(U)) {
+                    Worklist.push_back(U);
+                    ToDelete.push_back(cast<Instruction>(U));
+                }
+            }
+        }
+
+        // Delete in reverse order to avoid use-before-delete issues.
+        for (auto *I : llvm::reverse(ToDelete)) {
+            LLVM_DEBUG(dbgs() << "CustomDSE: erasing write-only user: " << *I << "\n");
+            I->eraseFromParent();
+            ++NumWriteOnlyStoresEliminated;
+        }
+
+        AI->eraseFromParent();
+        Changed = true;
+    }
+
+    return Changed;
+}
