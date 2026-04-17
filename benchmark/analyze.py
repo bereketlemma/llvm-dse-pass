@@ -31,6 +31,32 @@ def load_results(results_dir: str) -> list[dict]:
             })
     return rows
 
+
+def print_summary(rows: list[dict]):
+    total_baseline = sum(r["baseline_bytes"] for r in rows)
+    total_custom = sum(r["custom_bytes"] for r in rows)
+    total_stores = sum(r["stores_eliminated"] for r in rows)
+    total_time = sum(r["pass_time_ms"] for r in rows)
+    avg_time = total_time / len(rows) if rows else 0
+
+    affected = [r for r in rows if r["stores_eliminated"] > 0]
+    size_deltas = [r["size_pct"] for r in rows if r["size_pct"] > 0]
+    avg_size_pct = sum(size_deltas) / len(size_deltas) if size_deltas else 0
+
+    total_pct = ((total_baseline - total_custom) / total_baseline * 100
+                 if total_baseline > 0 else 0)
+
+    print()
+    print("=" * 72)
+    print("  CUSTOM DSE PASS — POLYBENCH/C BENCHMARK RESULTS")
+    print("=" * 72)
+    print()
+
+    # Per-kernel table
+    hdr = f"{'Kernel':<35} {'Stores':>7} {'Delta (B)':>10} {'Delta %':>8} {'Time':>6}"
+    print(hdr)
+    print("-" * len(hdr))
+
 # ...existing code...
 #!/usr/bin/env python3
 """
