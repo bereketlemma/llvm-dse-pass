@@ -155,6 +155,46 @@ bool CustomDSEPass::eliminateWriteOnlyAllocas(Function &F) {
 }
 
 //===----------------------------------------------------------------------===//
+// Strategy 3: Pre-Lifetime.End Store Elimination
+//===----------------------------------------------------------------------===//
+
+/// Eliminate stores to memory that is killed by llvm.lifetime.end before
+/// any possible read. Within a basic block, if we see:
+///     store ..., ptr %p
+///     llvm.lifetime.end(... %p)
+/// with no load of %p between them, the store is dead.
+
+bool CustomDSEPass::eliminatePreLifetimeEndStores(Function &F,
+                                                    MemorySSA &MSSA) {
+    bool Changed = false;
+    SmallVector<Instruction *, 8> ToDelete;
+
+    for (BasicBlock &BB : F) {
+        // Scan backwards: when we see a lifetime.end, record the pointer.
+        // Then, any store to that pointer (before a load) is dead.
+        SmallPtrSet<Value *, 4> KilledPtrs;
+
+        for (auto II = BB.rbegin(), IE = BB.rend(); II != IE; ++II) {
+            Instruction *I = &*II;
+
+            if (auto *Intr = dyn_cast<IntrinsicInst>(I)) {
+                if (Intr->getIntrinsicID() == Intrinsic::lifetime_end) {
+                    Value *Ptr = Intr->getArgOperand(1)->stripPointerCasts();
+                    KilledPtrs.insert(Ptr);
+                    continue;
+                }
+                if (Intr->getIntrinsicID() == Intrinsic::lifetime_start) {
+                    Value *Ptr = Intr->getArgOperand(1)->stripPointerCasts();
+                    KilledPtrs.erase(Ptr);
+                    continue;
+                }
+            }
+
+            if (auto *LI = dyn_cast<LoadInst>(I)) {
+                // A load from a killed pointer means the store is live.
+                Value *Ptr = LI->getPointerOperand()->stripPointerCasts();
+
+//===----------------------------------------------------------------------===//
 // Strategy 2: Dominated Redundant Store Elimination (MemorySSA)
 //===----------------------------------------------------------------------===//
 
