@@ -37,3 +37,69 @@ STATISTIC(NumDominatedStoresEliminated,
           "Number of dominated dead stores eliminated");
 STATISTIC(NumPreLifetimeStoresEliminated,
           "Number of pre-lifetime.end stores eliminated");
+
+namespace custom_dse {
+
+//===----------------------------------------------------------------------===//
+// Strategy 1: Write-Only Alloca Elimination
+//===----------------------------------------------------------------------===//
+
+/// An alloca is "write-only" if every use is either:
+///   - a StoreInst where the alloca is the *pointer* operand, or
+///   - a lifetime intrinsic (lifetime.start / lifetime.end), or
+///   - a bitcast/GEP chain that itself is only used by stores or lifetimes.
+///
+/// If no load, call, or escape uses the alloca, all stores to it are dead.
+
+static bool isWriteOnlyUser(const Value *V, SmallPtrSetImpl<const Value *> &Visited) {
+    if (!Visited.insert(V).second)
+        return true; // already checked, avoid cycles
+
+    for (const User *U : V->users()) {
+        if (const auto *SI = dyn_cast<StoreInst>(U)) {
+            // Volatile stores have side effects — not dead even if unread.
+            if (SI->isVolatile())
+                return false;
+            // The alloca must be the pointer operand, not the value being stored.
+            if (SI->getValueOperand() == V)
+                return false; // address escapes as a stored value
+            continue;
+        }
+
+        if (const auto *II = dyn_cast<IntrinsicInst>(U)) {
+            if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+                II->getIntrinsicID() == Intrinsic::lifetime_end)
+                continue;
+
+            // memset destination is a write — OK if alloca is dest (arg 0).
+            if (II->getIntrinsicID() == Intrinsic::memset) {
+                if (II->getArgOperand(0)->stripPointerCasts() == V)
+                    continue; // writing to the alloca — still write-only
+                return false;
+            }
+
+            // memcpy/memmove: dest (arg 0) is write, src (arg 1) is read.
+            if (II->getIntrinsicID() == Intrinsic::memcpy ||
+                II->getIntrinsicID() == Intrinsic::memmove) {
+                if (II->getArgOperand(0)->stripPointerCasts() == V)
+                    continue; // alloca is destination — write only
+                return false; // alloca is source — being read
+            }
+
+            return false; // some other intrinsic reads the memory
+        }
+
+        // Transparent pointer casts — recurse into their users.
+        if (isa<BitCastInst>(U) || isa<GetElementPtrInst>(U) ||
+            isa<AddrSpaceCastInst>(U)) {
+            if (!isWriteOnlyUser(U, Visited))
+                return false;
+            continue;
+        }
+
+        // Any other use (load, call, phi, etc.) means the value may be read.
+        return false;
+    }
+
+    return true;
+}
