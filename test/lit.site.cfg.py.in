@@ -1,0 +1,21 @@
+import os
+import sys
+
+config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.plugin_path = "@CMAKE_BINARY_DIR@/src/libCustomDSEPass.so"
+
+# Add LLVM tools (opt, FileCheck) to PATH
+path = os.path.pathsep.join([config.llvm_tools_dir, os.environ.get("PATH", "")])
+config.environment["PATH"] = path
+
+# Substitutions used in test files
+config.substitutions.append(("%opt", os.path.join(config.llvm_tools_dir, "opt")))
+config.substitutions.append(("%FileCheck", os.path.join(config.llvm_tools_dir, "FileCheck")))
+config.substitutions.append(("%plugin", config.plugin_path))
+
+import lit.formats
+config.name = "CustomDSE"
+config.test_format = lit.formats.ShTest(True)
+config.suffixes = [".ll"]
+config.test_source_root = os.path.join("@CMAKE_CURRENT_SOURCE_DIR@", "tests")
+config.test_exec_root = os.path.join("@CMAKE_CURRENT_BINARY_DIR@", "tests")
